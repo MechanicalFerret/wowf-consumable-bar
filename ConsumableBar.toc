@@ -1,0 +1,8 @@
+## Interface: 16001, 11507, 11509
+## Title: Consumable Bar
+## Notes: A movable bar of clickable buttons for your best Food, Water, Healing Potion, Mana Potion and Healthstone.
+## Version: 1.0
+## SavedVariables: ConsumableBarDB
+
+ConsumableBar.lua
+Options.lua
