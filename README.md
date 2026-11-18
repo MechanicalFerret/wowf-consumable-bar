@@ -14,6 +14,7 @@ A bar of clickable buttons for your best Food, Water, Bandage, Healing Potion, M
 - `/cbar` open settings
 - `/cbar unlock` / `/cbar lock`
 - `/cbar reset` reset position
+- `/cbar debug` print what the bar found in your bags
 
 ## Notes
 - Buttons can't be changed in combat; the bar updates when combat ends.

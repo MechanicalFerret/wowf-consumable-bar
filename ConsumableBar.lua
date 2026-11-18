@@ -79,6 +79,7 @@ local bar
 local buttons = {}
 local slots = {} -- category -> itemID of the current best
 local createSpell -- warlock fallback for the healthstone slot
+local misses = {} -- itemID -> failed tooltip reads
 local analysis = {} -- itemID -> { food=, water=, hp=, mp= } (false when not a candidate)
 local needsLayout, needsRetry = false, false
 local editMode = false
@@ -146,8 +147,19 @@ local function Analyze(id)
 	if cached ~= nil then return cached end
 
 	local _, _, _, _, _, class, subclass = GetItemInfoInstant(id)
+	if class == nil then
+		needsRetry = true
+		return false
+	end
 	if class ~= CLASS_CONSUMABLE or (subclass ~= SUB_POTION and subclass ~= SUB_FOOD and subclass ~= SUB_BANDAGE) then
 		analysis[id] = false
+		return false
+	end
+
+	-- At login the item cache is cold and the tooltip is only a placeholder. Don't
+	-- analyse (or cache a "not a candidate" result) until the client has the item.
+	if not GetItemInfo(id) then
+		needsRetry = true
 		return false
 	end
 
@@ -173,7 +185,15 @@ local function Analyze(id)
 			end
 		end
 	end
-	if not (out.food or out.water or out.bandage or out.hp or out.mp) then out = false end
+	if not (out.food or out.water or out.bandage or out.hp or out.mp) then
+		-- the tooltip may not be complete yet: only give up on the item after a few tries
+		misses[id] = (misses[id] or 0) + 1
+		if misses[id] < 4 then
+			needsRetry = true
+			return false
+		end
+		out = false
+	end
 	analysis[id] = out
 	return out
 end
@@ -407,11 +427,17 @@ local function Layout()
 	bar:SetShown(shown > 0 or Movable())
 end
 
+local retries = 0
 local function Refresh()
 	needsRetry = false
 	Scan()
 	Layout()
-	if needsRetry then C_Timer.After(1, ns.Refresh) end
+	if needsRetry and retries < 15 then
+		retries = retries + 1
+		C_Timer.After(1, ns.Refresh)
+	elseif not needsRetry then
+		retries = 0
+	end
 end
 
 local pending
@@ -575,9 +601,39 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		-- only matters while we are waiting on item data
 		if needsRetry then ns.Refresh() end
 	else
+		if event == "PLAYER_ENTERING_WORLD" then
+			-- bags and item data can still be filling in right after login
+			C_Timer.After(3, ns.Refresh)
+		end
 		ns.Refresh()
 	end
 end)
+
+function ns.Debug()
+	local function p(...) print("|cff33ff99CBar:|r", ...) end
+	p("retry pending:", tostring(needsRetry), "retries:", retries, "level:", UnitLevel("player"))
+	for _, cat in ipairs(CATEGORIES) do
+		p(cat, "->", tostring(slots[cat]), cat == "healthstone" and ("spell " .. tostring(createSpell)) or "")
+	end
+	local seen = {}
+	for bag = 0, (NUM_BAG_SLOTS or 4) do
+		for slot = 1, (NumSlots(bag) or 0) do
+			local id = SlotItemID(bag, slot)
+			if id and not seen[id] then
+				seen[id] = true
+				local _, _, _, _, _, class, sub = GetItemInfoInstant(id)
+				if class == CLASS_CONSUMABLE or HEALTHSTONE_RANK[id] or class == nil then
+					local a = analysis[id]
+					local r = a == nil and "NOT ANALYSED" or (a == false and "rejected" or
+						string.format("food=%s water=%s bandage=%s hp=%s mp=%s conj=%s wf=%s", tostring(a.food), tostring(a.water),
+							tostring(a.bandage), tostring(a.hp), tostring(a.mp), tostring(a.conjured), tostring(a.wellFed)))
+					local name, _, _, _, minLevel = GetItemInfo(id)
+					p(id, name or "(name not loaded)", "class", tostring(class), "sub", tostring(sub), "minLvl", tostring(minLevel), r, "misses", misses[id] or 0)
+				end
+			end
+		end
+	end
+end
 
 SLASH_CONSUMABLEBAR1 = "/cbar"
 SLASH_CONSUMABLEBAR2 = "/consumablebar"
@@ -588,6 +644,8 @@ SlashCmdList.CONSUMABLEBAR = function(input)
 		ns.SetLocked(true)
 	elseif input == "unlock" then
 		ns.SetLocked(false)
+	elseif input == "debug" then
+		ns.Debug()
 	elseif input == "reset" then
 		ns.ResetPosition()
 	elseif ns.OpenOptions then
