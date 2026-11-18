@@ -1,0 +1,5 @@
+package-as: ConsumableBar
+
+ignore:
+  - README.md
+  - .github
