@@ -18,7 +18,7 @@ A bar of clickable buttons for your best Food, Water, Bandage, Healing Potion, M
 - `/cbar debug` print what the bar found in your bags
 
 ## Notes
-- Buttons can't be changed in combat; the bar updates when combat ends.
+- Nothing is scanned or updated in combat; the bar catches up when combat ends. Using a bar button in combat refreshes just that button.
 - Item detection reads English tooltip text.
 
 ## Install

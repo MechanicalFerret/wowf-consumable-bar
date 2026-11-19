@@ -345,6 +345,14 @@ local function CreateButton(cat)
 		GameTooltip:Show()
 	end)
 	b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+	-- Using a bar item or ability in combat is the one thing allowed to update the bar.
+	-- Protected so a restricted cooldown or count value can never raise an error.
+	b:HookScript("PostClick", function(self)
+		if InCombatLockdown() then
+			C_Timer.After(0.2, function() pcall(ns.UpdateButton, self) end)
+		end
+	end)
 	return b
 end
 
@@ -392,6 +400,8 @@ local function UpdateButton(b)
 		b.cooldown:Clear()
 	end
 end
+
+ns.UpdateButton = UpdateButton
 
 -- Resizes, repositions and re-targets the secure buttons. Protected, so never in combat.
 local function Layout()
@@ -461,6 +471,8 @@ end
 
 local retries = 0
 local function Refresh()
+	-- nothing touches bags, tooltips or cooldowns in combat; PLAYER_REGEN_ENABLED re-runs this
+	if InCombatLockdown() then return end
 	needsRetry = false
 	Scan()
 	Layout()
@@ -474,7 +486,7 @@ end
 
 local pending
 function ns.Refresh()
-	if not db then return end
+	if not db or InCombatLockdown() then return end
 	if pending then return end
 	pending = true
 	C_Timer.After(0.1, function()
@@ -513,6 +525,7 @@ function ns.SetLocked(locked)
 end
 
 local function UpdateCooldowns()
+	if InCombatLockdown() then return end
 	for _, cat in ipairs(CATEGORIES) do
 		local b = buttons[cat]
 		if b:IsShown() then UpdateButton(b) end
