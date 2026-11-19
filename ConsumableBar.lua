@@ -1,6 +1,6 @@
 local ADDON, ns = ...
 
-local CATEGORIES = { "food", "water", "bandage", "healthPotion", "manaPotion", "rejuvPotion", "healthstone" }
+local CATEGORIES = { "food", "water", "bandage", "healthPotion", "manaPotion", "rejuvPotion", "healthstone", "racial" }
 local LABELS = {
 	food = "Food",
 	water = "Water",
@@ -9,6 +9,7 @@ local LABELS = {
 	manaPotion = "Mana Potion",
 	rejuvPotion = "Rejuvenation Potion",
 	healthstone = "Healthstone",
+	racial = "Racial abilities",
 }
 local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 
@@ -22,7 +23,7 @@ local DEFAULTS = {
 	showCount = true,
 	showTooltip = true,
 	preferMage = true, -- conjured food and water beat any other food and water
-	show = { food = true, water = true, bandage = true, healthPotion = true, manaPotion = true, rejuvPotion = true, healthstone = true },
+	show = { food = true, water = true, bandage = true, healthPotion = true, manaPotion = true, rejuvPotion = true, healthstone = true, racial = true },
 	pos = { 0, -200 }, -- anchor edge: x, y from the screen centre, in UIParent units
 }
 
@@ -41,6 +42,9 @@ for rank, id in ipairs(HEALTHSTONES) do HEALTHSTONE_RANK[id] = rank end
 
 -- Warlock "Create Healthstone" ranks, strongest first (unknown ids are simply skipped)
 local CREATE_HEALTHSTONE = { 47879, 47878, 27230, 11730, 11729, 5699, 6202, 6201 }
+-- Racial abilities that restore something (Forsaken, Trolls). Looked up by name, then
+-- confirmed against the spellbook, so no spell ids are needed.
+local RACIALS = { "Cannibalize", "Rapid Regeneration" }
 local CREATE_TINT = { 0.6, 0.45, 1 }
 local IS_WARLOCK = select(2, UnitClass("player")) == "WARLOCK"
 
@@ -52,6 +56,13 @@ local GetItemCount = (C_Item and C_Item.GetItemCount) or GetItemCount
 local GetItemCooldown = (C_Item and C_Item.GetItemCooldown) or GetItemCooldown
 local function SpellTexture(id)
 	return (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)) or (GetSpellTexture and GetSpellTexture(id))
+end
+local function SpellIDByName(name)
+	if C_Spell and C_Spell.GetSpellInfo then
+		local info = C_Spell.GetSpellInfo(name)
+		return info and info.spellID
+	end
+	return select(7, GetSpellInfo(name))
 end
 local function SpellKnown(id)
 	if IsPlayerSpell then return IsPlayerSpell(id) end
@@ -79,6 +90,7 @@ local bar
 local buttons = {}
 local slots = {} -- category -> itemID of the current best
 local createSpell -- warlock fallback for the healthstone slot
+local racialSpell -- first known racial from RACIALS
 local misses = {} -- itemID -> failed tooltip reads
 local analysis = {} -- itemID -> { food=, water=, hp=, mp= } (false when not a candidate)
 local needsLayout, needsRetry = false, false
@@ -246,6 +258,15 @@ local function Scan()
 		slots[cat] = best[cat] and best[cat].id or nil
 	end
 
+	racialSpell = nil
+	for _, name in ipairs(RACIALS) do
+		local id = SpellIDByName(name)
+		if id and SpellKnown(id) then
+			racialSpell = id
+			break
+		end
+	end
+
 	createSpell = nil
 	if IS_WARLOCK and not slots.healthstone then
 		for _, id in ipairs(CREATE_HEALTHSTONE) do
@@ -331,8 +352,14 @@ local function UpdateButton(b)
 	local id = b.itemID
 	if not id and b.spellID then
 		b.icon:SetTexture(SpellTexture(b.spellID))
-		b.icon:SetDesaturated(true)
-		b.icon:SetVertexColor(unpack(CREATE_TINT))
+		-- the healthstone "create" button is tinted; a racial shows its normal icon
+		if b.category == "healthstone" then
+			b.icon:SetDesaturated(true)
+			b.icon:SetVertexColor(unpack(CREATE_TINT))
+		else
+			b.icon:SetDesaturated(false)
+			b.icon:SetVertexColor(1, 1, 1)
+		end
 		b.icon:SetAlpha(1)
 		b.count:SetText("")
 		local start, duration = SpellCooldown(b.spellID)
@@ -382,8 +409,13 @@ local function Layout()
 	for _, cat in ipairs(CATEGORIES) do
 		local b = buttons[cat]
 		b.itemID = slots[cat]
-		b.spellID = (cat == "healthstone" and not b.itemID) and createSpell or nil
-		local visible = db.show[cat] and (b.itemID or b.spellID or not db.hideEmpty)
+		if cat == "healthstone" then
+			b.spellID = not b.itemID and createSpell or nil
+		else
+			b.spellID = cat == "racial" and racialSpell or nil
+		end
+		-- the racial slot only ever appears when you actually have one
+		local visible = db.show[cat] and (b.itemID or b.spellID or (not db.hideEmpty and cat ~= "racial"))
 		if visible then
 			local offset = shown * (size + spacing)
 			b:ClearAllPoints()
@@ -613,7 +645,8 @@ function ns.Debug()
 	local function p(...) print("|cff33ff99CBar:|r", ...) end
 	p("retry pending:", tostring(needsRetry), "retries:", retries, "level:", UnitLevel("player"))
 	for _, cat in ipairs(CATEGORIES) do
-		p(cat, "->", tostring(slots[cat]), cat == "healthstone" and ("spell " .. tostring(createSpell)) or "")
+		p(cat, "->", tostring(slots[cat]), cat == "healthstone" and ("spell " .. tostring(createSpell)) or "",
+			cat == "racial" and ("spell " .. tostring(racialSpell)) or "")
 	end
 	local seen = {}
 	for bag = 0, (NUM_BAG_SLOTS or 4) do

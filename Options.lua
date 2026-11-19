@@ -191,7 +191,7 @@ function ns.BuildOptions()
 
 	local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	reset:SetSize(140, 24)
-	reset:SetPoint("TOPLEFT", 330, -302)
+	reset:SetPoint("TOPLEFT", 330, -330)
 	reset:SetText("Reset position")
 	reset:SetScript("OnClick", function() ns.ResetPosition() end)
 
