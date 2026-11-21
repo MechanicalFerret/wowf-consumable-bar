@@ -22,6 +22,8 @@ local DEFAULTS = {
 	hideEmpty = true,
 	showCount = true,
 	showTooltip = true,
+	preferWellFed = true, -- Well Fed food wins ties against equal food
+	stackPref = "SMALL", -- tie between equal items: SMALL uses up the smaller stack first, LARGE the larger
 	preferMage = true, -- conjured food and water beat any other food and water
 	show = { food = true, water = true, bandage = true, healthPotion = true, manaPotion = true, rejuvPotion = true, healthstone = true, racial = true },
 	pos = { 0, -200 }, -- anchor edge: x, y from the screen centre, in UIParent units
@@ -221,11 +223,13 @@ local function Scan()
 	local function consider(cat, id, value)
 		local cur = best[cat]
 		-- Value already includes the Mage and Well Fed bonuses, so those win first.
-		-- Only on an exact tie does the smaller stack go first, to use it up.
-		if not cur or value > cur.value
-			or (value == cur.value and (GetItemCount(id) or 0) < (GetItemCount(cur.id) or 0)) then
-			best[cat] = { id = id, value = value }
+		-- Only on an exact tie does stack size decide (smaller first unless set to LARGE).
+		local better = not cur or value > cur.value
+		if not better and value == cur.value then
+			local n, curN = GetItemCount(id) or 0, GetItemCount(cur.id) or 0
+			better = db.stackPref == "LARGE" and n > curN or db.stackPref ~= "LARGE" and n < curN
 		end
+		if better then best[cat] = { id = id, value = value } end
 	end
 
 	local playerLevel = UnitLevel("player")
@@ -247,7 +251,7 @@ local function Scan()
 							-- conjured (mage) food and water outrank everything else when preferred
 							local bonus = (db.preferMage and info.conjured) and 1e9 or 0
 							-- the 0.5 only breaks ties: amounts are whole numbers, so Well Fed food never loses to equal food
-							if info.food then consider("food", id, info.food + bonus + (info.wellFed and 0.5 or 0)) end
+							if info.food then consider("food", id, info.food + bonus + ((db.preferWellFed and info.wellFed) and 0.5 or 0)) end
 							if info.water then consider("water", id, info.water + bonus) end
 							if info.bandage then consider("bandage", id, info.bandage) end
 							if info.hp and info.mp then

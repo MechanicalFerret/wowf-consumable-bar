@@ -10,7 +10,44 @@ local function Header(parent, text, x, y)
 	return fs
 end
 
-local function Checkbox(parent, label, x, y, get, set)
+-- Hover explanations, keyed by the option's label (checkboxes), key (sliders, dropdowns) or category
+local TIPS = {
+	["Lock bar"] = "Unlocked, drag the bar with the left mouse button. It can always be moved in Edit Mode. Also /cbar lock and /cbar unlock.",
+	["Hide empty buttons"] = "Hides buttons that have nothing in your bags. When off, empty buttons show dimmed.",
+	["Show item counts"] = "Shows how many of each item you carry on its button.",
+	["Show tooltips"] = "Shows the item or ability tooltip when you hover a button.",
+	["Always use Mage items"] = "Conjured food and water are chosen before any other food or water, even if the others restore more.",
+	["Prefer Well Fed food"] = "When two foods restore the same amount, the one that grants the Well Fed buff is chosen.",
+	size = "Size of each button.",
+	spacing = "Gap between buttons.",
+	scale = "Scales the whole bar.",
+	direction = "Which edge the bar is anchored to. Grow right keeps the left edge fixed, grow left keeps the right edge fixed, so buttons appearing or disappearing extend away from that edge.",
+	stackPref = "When two items are otherwise equal, choose the one you have fewer of (use it up first) or more of.",
+	reset = "Moves the bar back to its default position.",
+}
+local CATEGORY_TIPS = {
+	food = "Shows the food that restores the most health.",
+	water = "Shows the drink that restores the most mana.",
+	bandage = "Shows the bandage that heals the most. Used on your friendly target, otherwise on you.",
+	healthPotion = "Shows your strongest healing potion.",
+	manaPotion = "Shows your strongest mana potion.",
+	rejuvPotion = "Shows your strongest potion that restores both health and mana.",
+	healthstone = "Shows your best Healthstone. Warlocks without one get a Create Healthstone button.",
+	racial = "Shows Cannibalize (Forsaken) or Rapid Regeneration (Trolls) when you have it.",
+}
+
+local function Tip(frame, title, text)
+	if not text then return end
+	frame:HookScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText(title, 1, 1, 1)
+		GameTooltip:AddLine(text, nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	frame:HookScript("OnLeave", function() GameTooltip:Hide() end)
+end
+
+local function Checkbox(parent, label, x, y, get, set, tip)
 	local c = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
 	c:SetPoint("TOPLEFT", x, y)
 	local text = c.text or c.Text or _G[c:GetName() and (c:GetName() .. "Text") or ""]
@@ -24,6 +61,7 @@ local function Checkbox(parent, label, x, y, get, set)
 		for _, fn in ipairs(refreshers) do fn() end
 	end)
 	refreshers[#refreshers + 1] = function() c:SetChecked(get()) end
+	Tip(c, label, tip or TIPS[label])
 	return c
 end
 
@@ -46,6 +84,8 @@ local function Slider(parent, label, x, y, min, max, step, key, fmt)
 	s:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
 	s:GetThumbTexture():SetSize(20, 28)
 
+	Tip(s, label, TIPS[key])
+
 	local function show(v) title:SetText(label .. ": |cffffffff" .. string.format(fmt, v) .. "|r") end
 	s:SetScript("OnValueChanged", function(self, v)
 		if self.syncing then return end
@@ -64,33 +104,47 @@ local function Slider(parent, label, x, y, min, max, step, key, fmt)
 end
 
 local ddCount = 0
-local function Dropdown(parent, x, y)
-	local DIRECTIONS = {
-		{ value = "LTR", text = "Grow right" },
-		{ value = "RTL", text = "Grow left" },
-	}
-	local function text()
-		return ns.GetDB().direction == "RTL" and DIRECTIONS[2].text or DIRECTIONS[1].text
+-- choices: { { value =, text = }, ... }; the first one is the default for a missing/unknown value
+local function Dropdown(parent, x, y, key, choices, set)
+	local function current()
+		local v = ns.GetDB()[key]
+		for _, c in ipairs(choices) do
+			if c.value == v then return c end
+		end
+		return choices[1]
 	end
 	ddCount = ddCount + 1
-	local dd = CreateFrame("Frame", "ConsumableBarDirectionDropdown" .. ddCount, parent, "UIDropDownMenuTemplate")
+	local dd = CreateFrame("Frame", "ConsumableBarDropdown" .. ddCount, parent, "UIDropDownMenuTemplate")
 	dd:SetPoint("TOPLEFT", x, y)
 	UIDropDownMenu_SetWidth(dd, 180)
 	UIDropDownMenu_Initialize(dd, function()
-		for _, d in ipairs(DIRECTIONS) do
+		for _, c in ipairs(choices) do
 			local info = UIDropDownMenu_CreateInfo()
-			info.text = d.text
-			info.checked = (ns.GetDB().direction == "RTL") == (d.value == "RTL")
+			info.text = c.text
+			info.checked = current() == c
 			info.func = function()
-				ns.SetDirection(d.value)
+				set(c.value)
 				for _, fn in ipairs(refreshers) do fn() end
 			end
 			UIDropDownMenu_AddButton(info)
 		end
 	end)
-	refreshers[#refreshers + 1] = function() UIDropDownMenu_SetText(dd, text()) end
+	refreshers[#refreshers + 1] = function() UIDropDownMenu_SetText(dd, current().text) end
+	local name = dd:GetName()
+	local button = dd.Button or (name and _G[name .. "Button"])
+	local label = key == "direction" and "Direction" or "Stack tie-break"
+	Tip(button or dd, label, TIPS[key])
 	return dd
 end
+
+local DIRECTIONS = {
+	{ value = "LTR", text = "Grow right" },
+	{ value = "RTL", text = "Grow left" },
+}
+local STACK_CHOICES = {
+	{ value = "SMALL", text = "Smaller stacks first" },
+	{ value = "LARGE", text = "Larger stacks first" },
+}
 
 -- Appearance settings shown beside the bar while it is selected in Edit Mode
 local dialog
@@ -116,7 +170,7 @@ function ns.ShowEditDialog(bar)
 		close:SetPoint("TOPRIGHT", -4, -4)
 		close:SetScript("OnClick", function() ns.SetSelected(false) end)
 
-		Dropdown(dialog, 12, -44)
+		Dropdown(dialog, 12, -44, "direction", DIRECTIONS, ns.SetDirection)
 		Slider(dialog, "Button size", 28, -90, 20, 64, 1, "size", "%d")
 		Slider(dialog, "Spacing", 28, -136, 0, 20, 1, "spacing", "%d")
 		Slider(dialog, "Scale", 28, -182, 0.5, 2, 0.05, "scale", "%.2f")
@@ -162,7 +216,7 @@ function ns.BuildOptions()
 
 	-- Layout
 	Header(panel, "Layout", 16, -70)
-	Dropdown(panel, 8, -98)
+	Dropdown(panel, 8, -98, "direction", DIRECTIONS, ns.SetDirection)
 
 	Slider(panel, "Button size", 24, -160, 20, 64, 1, "size", "%d")
 	Slider(panel, "Spacing", 24, -206, 0, 20, 1, "spacing", "%d")
@@ -180,6 +234,9 @@ function ns.BuildOptions()
 		function() return db.showTooltip end, function(v) db.showTooltip = v end)
 	Checkbox(panel, "Always use Mage items", 16, -430,
 		function() return db.preferMage end, function(v) db.preferMage = v; ns.Refresh() end)
+	Checkbox(panel, "Prefer Well Fed food", 16, -456,
+		function() return db.preferWellFed end, function(v) db.preferWellFed = v; ns.Refresh() end)
+	Dropdown(panel, 8, -484, "stackPref", STACK_CHOICES, function(v) db.stackPref = v; ns.Refresh() end)
 
 	-- Categories
 	Header(panel, "Buttons", 330, -70)
@@ -188,7 +245,8 @@ function ns.BuildOptions()
 		if not ns.HIDDEN[cat] then
 			Checkbox(panel, ns.LABELS[cat], 330, -96 - row * 26,
 				function() return db.show[cat] end,
-				function(v) db.show[cat] = v; ns.ApplySettings() end)
+				function(v) db.show[cat] = v; ns.ApplySettings() end,
+				CATEGORY_TIPS[cat])
 			row = row + 1
 		end
 	end
@@ -197,6 +255,7 @@ function ns.BuildOptions()
 	reset:SetSize(140, 24)
 	reset:SetPoint("TOPLEFT", 330, -330)
 	reset:SetText("Reset position")
+	Tip(reset, "Reset position", TIPS.reset)
 	reset:SetScript("OnClick", function() ns.ResetPosition() end)
 
 	-- The settings window can show the panel without a usable OnShow, so sync on
