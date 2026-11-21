@@ -183,10 +183,14 @@ function ns.BuildOptions()
 
 	-- Categories
 	Header(panel, "Buttons", 330, -70)
-	for i, cat in ipairs(ns.CATEGORIES) do
-		Checkbox(panel, ns.LABELS[cat], 330, -96 - (i - 1) * 26,
-			function() return db.show[cat] end,
-			function(v) db.show[cat] = v; ns.ApplySettings() end)
+	local row = 0
+	for _, cat in ipairs(ns.CATEGORIES) do
+		if not ns.HIDDEN[cat] then
+			Checkbox(panel, ns.LABELS[cat], 330, -96 - row * 26,
+				function() return db.show[cat] end,
+				function(v) db.show[cat] = v; ns.ApplySettings() end)
+			row = row + 1
+		end
 	end
 
 	local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")

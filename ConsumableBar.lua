@@ -46,7 +46,13 @@ local CREATE_HEALTHSTONE = { 47879, 47878, 27230, 11730, 11729, 5699, 6202, 6201
 -- confirmed against the spellbook, so no spell ids are needed.
 local RACIALS = { "Cannibalize", "Rapid Regeneration" }
 local CREATE_TINT = { 0.6, 0.45, 1 }
-local IS_WARLOCK = select(2, UnitClass("player")) == "WARLOCK"
+local CLASS = select(2, UnitClass("player"))
+local IS_WARLOCK = CLASS == "WARLOCK"
+-- Warriors and Rogues have no mana at all (druid forms don't count), so these never show
+local HIDDEN = {}
+if CLASS == "WARRIOR" or CLASS == "ROGUE" then
+	HIDDEN.water, HIDDEN.manaPotion = true, true
+end
 
 local CLASS_CONSUMABLE, SUB_POTION, SUB_FOOD, SUB_BANDAGE = 0, 1, 5, 7
 
@@ -98,7 +104,7 @@ local editMode = false
 
 local function Movable() return editMode or not db.locked end
 
-ns.CATEGORIES, ns.LABELS, ns.DEFAULTS = CATEGORIES, LABELS, DEFAULTS
+ns.CATEGORIES, ns.LABELS, ns.DEFAULTS, ns.HIDDEN = CATEGORIES, LABELS, DEFAULTS, HIDDEN
 
 local function CopyDefaults(dst, src)
 	for k, v in pairs(src) do
@@ -425,7 +431,7 @@ local function Layout()
 			b.spellID = cat == "racial" and racialSpell or nil
 		end
 		-- the racial slot only ever appears when you actually have one
-		local visible = db.show[cat] and (b.itemID or b.spellID or (not db.hideEmpty and cat ~= "racial"))
+		local visible = db.show[cat] and not HIDDEN[cat] and (b.itemID or b.spellID or (not db.hideEmpty and cat ~= "racial"))
 		if visible then
 			local offset = shown * (size + spacing)
 			b:ClearAllPoints()
