@@ -220,7 +220,12 @@ local function Scan()
 	local best = {}
 	local function consider(cat, id, value)
 		local cur = best[cat]
-		if not cur or value > cur.value then best[cat] = { id = id, value = value } end
+		-- Value already includes the Mage and Well Fed bonuses, so those win first.
+		-- Only on an exact tie does the smaller stack go first, to use it up.
+		if not cur or value > cur.value
+			or (value == cur.value and (GetItemCount(id) or 0) < (GetItemCount(cur.id) or 0)) then
+			best[cat] = { id = id, value = value }
+		end
 	end
 
 	local playerLevel = UnitLevel("player")
