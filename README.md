@@ -4,7 +4,9 @@ A bar of clickable buttons for your best Food, Water, Bandage, Healing Potion, M
 
 ## Features
 - Picks the strongest item in your bags that your level allows (amounts read from tooltips).
-- Option to always prefer Mage conjured food and water. Well Fed food wins ties.
+- Option to always prefer Mage conjured food and water. Well Fed food wins ties (optional).
+- Equal items: use up the smaller stack first, or the larger (option).
+- Hover any option in the settings for an explanation.
 - Warriors and Rogues never see Water or Mana Potion buttons.
 - Warlocks see a tinted Create Healthstone button when they have no healthstone.
 - Forsaken (Cannibalize) and Trolls (Rapid Regeneration) get a racial button after the Healthstone.
