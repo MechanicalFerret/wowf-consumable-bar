@@ -103,6 +103,7 @@ local function Slider(parent, label, x, y, min, max, step, key, fmt)
 	return s
 end
 
+local DROPDOWN_LABELS = { direction = "Direction", stackPref = "Stack tie-break" }
 local ddCount = 0
 -- choices: { { value =, text = }, ... }; the first one is the default for a missing/unknown value
 local function Dropdown(parent, x, y, key, choices, set)
@@ -132,8 +133,7 @@ local function Dropdown(parent, x, y, key, choices, set)
 	refreshers[#refreshers + 1] = function() UIDropDownMenu_SetText(dd, current().text) end
 	local name = dd:GetName()
 	local button = dd.Button or (name and _G[name .. "Button"])
-	local label = key == "direction" and "Direction" or "Stack tie-break"
-	Tip(button or dd, label, TIPS[key])
+	Tip(button or dd, DROPDOWN_LABELS[key], TIPS[key])
 	return dd
 end
 
@@ -205,6 +205,41 @@ function ns.OpenOptions()
 	end
 end
 
+-- Both bar addons share one "Adaptable Bars" settings category; whichever loads first creates it.
+local PARENT_NAME = "Adaptable Bars"
+
+local function RegisterPanel(panel)
+	local parent = _G.AdaptableBarsCategory
+	if not parent then
+		local home = CreateFrame("Frame")
+		home.name = PARENT_NAME
+		local t = home:CreateFontString(nil, "ARTWORK", "GameFontNormalHuge")
+		t:SetPoint("TOPLEFT", 16, -16)
+		t:SetText(PARENT_NAME)
+		local d = home:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+		d:SetPoint("TOPLEFT", t, "BOTTOMLEFT", 0, -8)
+		d:SetText("Pick a bar on the left.")
+		if Settings and Settings.RegisterCanvasLayoutCategory then
+			parent = Settings.RegisterCanvasLayoutCategory(home, PARENT_NAME)
+			Settings.RegisterAddOnCategory(parent)
+			_G.AdaptableBarsCategory = parent
+		elseif InterfaceOptions_AddCategory then
+			InterfaceOptions_AddCategory(home)
+			_G.AdaptableBarsCategory = home
+		end
+	end
+
+	if Settings and Settings.RegisterCanvasLayoutSubcategory and parent and parent.GetID then
+		category = Settings.RegisterCanvasLayoutSubcategory(parent, panel, panel.name)
+	elseif Settings and Settings.RegisterCanvasLayoutCategory then
+		category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+		Settings.RegisterAddOnCategory(category)
+	elseif InterfaceOptions_AddCategory then
+		panel.parent = PARENT_NAME
+		InterfaceOptions_AddCategory(panel)
+	end
+end
+
 function ns.BuildOptions()
 	local db = ns.GetDB()
 	panel = CreateFrame("Frame")
@@ -233,10 +268,10 @@ function ns.BuildOptions()
 	Checkbox(panel, "Show tooltips", 16, -404,
 		function() return db.showTooltip end, function(v) db.showTooltip = v end)
 	Checkbox(panel, "Always use Mage items", 16, -430,
-		function() return db.preferMage end, function(v) db.preferMage = v; ns.Refresh() end)
+		function() return db.preferMage end, function(v) db.preferMage = v; ns.Refresh(true, false) end)
 	Checkbox(panel, "Prefer Well Fed food", 16, -456,
-		function() return db.preferWellFed end, function(v) db.preferWellFed = v; ns.Refresh() end)
-	Dropdown(panel, 8, -484, "stackPref", STACK_CHOICES, function(v) db.stackPref = v; ns.Refresh() end)
+		function() return db.preferWellFed end, function(v) db.preferWellFed = v; ns.Refresh(true, false) end)
+	Dropdown(panel, 8, -484, "stackPref", STACK_CHOICES, function(v) db.stackPref = v; ns.Refresh(true, false) end)
 
 	-- Categories
 	Header(panel, "Buttons", 330, -70)
@@ -270,10 +305,5 @@ function ns.BuildOptions()
 	end)
 	refresh()
 
-	if Settings and Settings.RegisterCanvasLayoutCategory then
-		category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
-		Settings.RegisterAddOnCategory(category)
-	elseif InterfaceOptions_AddCategory then
-		InterfaceOptions_AddCategory(panel)
-	end
+	RegisterPanel(panel)
 end

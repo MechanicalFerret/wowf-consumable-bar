@@ -97,12 +97,14 @@ local db
 local bar
 local buttons = {}
 local slots = {} -- category -> itemID of the current best
+local minLevels = {} -- itemID -> required level, cached once the client knows the item
 local createSpell -- warlock fallback for the healthstone slot
 local racialSpell -- first known racial from RACIALS
 local misses = {} -- itemID -> failed tooltip reads
 local analysis = {} -- itemID -> { food=, water=, hp=, mp= } (false when not a candidate)
 local needsLayout, needsRetry = false, false
 local editMode = false
+local selected, ignoreClear = false, false -- Edit Mode style selection (declared early: Layout reads it)
 
 local function Movable() return editMode or not db.locked end
 
@@ -218,7 +220,9 @@ local function Analyze(id)
 	return out
 end
 
-local function Scan()
+-- Bag contents -> the best item per category
+local function ScanItems()
+	needsRetry = false
 	local best = {}
 	local function consider(cat, id, value)
 		local cur = best[cat]
@@ -242,9 +246,17 @@ local function Scan()
 				local rank = HEALTHSTONE_RANK[id]
 				local info = not rank and Analyze(id)
 				if rank or info then
-					local name, _, _, _, minLevel = GetItemInfo(id)
-					if not name then needsRetry = true end
-					if (minLevel or 0) <= playerLevel then
+					local minLevel = minLevels[id]
+					if not minLevel then
+						local name, _, _, _, level = GetItemInfo(id)
+						if name then
+							minLevel = level or 0
+							minLevels[id] = minLevel
+						else
+							needsRetry = true
+						end
+					end
+					if minLevel and minLevel <= playerLevel then
 						if rank then
 							consider("healthstone", id, rank)
 						else
@@ -252,14 +264,14 @@ local function Scan()
 							local bonus = (db.preferMage and info.conjured) and 1e9 or 0
 							-- the 0.5 only breaks ties: amounts are whole numbers, so Well Fed food never loses to equal food
 							if info.food then consider("food", id, info.food + bonus + ((db.preferWellFed and info.wellFed) and 0.5 or 0)) end
-							if info.water then consider("water", id, info.water + bonus) end
+							if info.water and not HIDDEN.water then consider("water", id, info.water + bonus) end
 							if info.bandage then consider("bandage", id, info.bandage) end
 							if info.hp and info.mp then
 								-- restores both: its own slot, not a healing or mana potion
 								consider("rejuvPotion", id, info.hp + info.mp)
 							elseif info.hp then
 								consider("healthPotion", id, info.hp)
-							elseif info.mp then
+							elseif info.mp and not HIDDEN.manaPotion then
 								consider("manaPotion", id, info.mp)
 							end
 						end
@@ -272,7 +284,10 @@ local function Scan()
 	for _, cat in ipairs(CATEGORIES) do
 		slots[cat] = best[cat] and best[cat].id or nil
 	end
+end
 
+-- Spellbook -> racial ability and the warlock's Create Healthstone fallback
+local function ScanSpells()
 	racialSpell = nil
 	for _, name in ipairs(RACIALS) do
 		local id = SpellIDByName(name)
@@ -283,7 +298,7 @@ local function Scan()
 	end
 
 	createSpell = nil
-	if IS_WARLOCK and not slots.healthstone then
+	if IS_WARLOCK then
 		for _, id in ipairs(CREATE_HEALTHSTONE) do
 			if SpellKnown(id) then
 				createSpell = id
@@ -371,9 +386,33 @@ local function CreateButton(cat)
 	return b
 end
 
+local function UpdateCooldown(b)
+	local start, duration
+	if b.itemID then
+		start, duration = GetItemCooldown(b.itemID)
+	elseif b.spellID then
+		start, duration = SpellCooldown(b.spellID)
+	else
+		return
+	end
+	if start and duration and duration > 0 then
+		b.cooldown:SetCooldown(start, duration)
+	else
+		b.cooldown:Clear()
+	end
+end
+
 local function UpdateButton(b)
 	local id = b.itemID
-	if not id and b.spellID then
+	if id then
+		local _, _, _, _, icon = GetItemInfoInstant(id)
+		b.icon:SetTexture(icon)
+		b.icon:SetVertexColor(1, 1, 1)
+		b.icon:SetDesaturated(false)
+		b.icon:SetAlpha(1)
+		local n = db.showCount and GetItemCount(id) or 0
+		b.count:SetText(n > 1 and n or "")
+	elseif b.spellID then
 		b.icon:SetTexture(SpellTexture(b.spellID))
 		-- the healthstone "create" button is tinted; a racial shows its normal icon
 		if b.category == "healthstone" then
@@ -385,38 +424,34 @@ local function UpdateButton(b)
 		end
 		b.icon:SetAlpha(1)
 		b.count:SetText("")
-		local start, duration = SpellCooldown(b.spellID)
-		if start and duration and duration > 0 then
-			b.cooldown:SetCooldown(start, duration)
-		else
-			b.cooldown:Clear()
-		end
-		return
-	end
-	b.icon:SetVertexColor(1, 1, 1)
-	if id then
-		local _, _, _, _, icon = GetItemInfoInstant(id)
-		b.icon:SetTexture(icon)
-		b.icon:SetDesaturated(false)
-		b.icon:SetAlpha(1)
-		local n = GetItemCount(id) or 0
-		b.count:SetText((db.showCount and n > 1) and n or "")
-		local start, duration = GetItemCooldown(id)
-		if start and duration and duration > 0 then
-			b.cooldown:SetCooldown(start, duration)
-		else
-			b.cooldown:Clear()
-		end
 	else
 		b.icon:SetTexture(EMPTY_ICON)
+		b.icon:SetVertexColor(1, 1, 1)
 		b.icon:SetDesaturated(true)
 		b.icon:SetAlpha(0.4)
 		b.count:SetText("")
 		b.cooldown:Clear()
+		return
 	end
+	UpdateCooldown(b)
 end
 
 ns.UpdateButton = UpdateButton
+
+-- What a click does: cast the spell, bandage a friendly target (else yourself), or use the item
+local function SetClickAttributes(b)
+	for _, a in ipairs({ "type", "spell", "item", "macrotext" }) do b:SetAttribute(a, nil) end
+	if b.spellID then
+		b:SetAttribute("type", "spell")
+		b:SetAttribute("spell", b.spellID)
+	elseif b.itemID and b.category == "bandage" then
+		b:SetAttribute("type", "macro")
+		b:SetAttribute("macrotext", "/use [@target,help,nodead][@player] item:" .. b.itemID)
+	elseif b.itemID then
+		b:SetAttribute("type", "item")
+		b:SetAttribute("item", "item:" .. b.itemID)
+	end
+end
 
 -- Resizes, repositions and re-targets the secure buttons. Protected, so never in combat.
 local function Layout()
@@ -454,27 +489,14 @@ local function Layout()
 			border:ClearAllPoints()
 			border:SetPoint("CENTER", 0, -size / 36)
 			border:SetSize(size * 64 / 36, size * 64 / 36)
-			if b.spellID then
-				b:SetAttribute("type", "spell")
-				b:SetAttribute("spell", b.spellID)
-				b:SetAttribute("item", nil)
-			elseif cat == "bandage" then
-				-- bandage a friendly target, otherwise yourself
-				b:SetAttribute("type", "macro")
-				b:SetAttribute("macrotext", b.itemID and ("/use [@target,help,nodead][@player] item:" .. b.itemID) or nil)
-			else
-				b:SetAttribute("type", "item")
-				b:SetAttribute("spell", nil)
-				b:SetAttribute("item", b.itemID and ("item:" .. b.itemID) or nil)
-			end
+			SetClickAttributes(b)
 			b:Show()
 			shown = shown + 1
+			UpdateButton(b)
 		else
 			b:Hide()
-			b:SetAttribute("item", nil)
-			b:SetAttribute("macrotext", nil)
+			SetClickAttributes(b) -- a hidden button must not keep a stale action
 		end
-		UpdateButton(b)
 	end
 
 	local n = math.max(shown, 1)
@@ -484,29 +506,55 @@ local function Layout()
 	bar:SetShown(shown > 0 or Movable())
 end
 
+-- What is on the bar, so an unchanged bar skips the re-layout
+local lastSignature
+local function Signature()
+	local t = {}
+	for i, cat in ipairs(CATEGORIES) do t[i] = tostring(slots[cat] or "-") end
+	t[#t + 1] = tostring(racialSpell)
+	t[#t + 1] = tostring(createSpell)
+	return table.concat(t, ",")
+end
+
 local retries = 0
-local function Refresh()
+-- items / spells: which scans to redo
+local function Refresh(items, spells)
 	-- nothing touches bags, tooltips or cooldowns in combat; PLAYER_REGEN_ENABLED re-runs this
 	if InCombatLockdown() then return end
-	needsRetry = false
-	Scan()
-	Layout()
+	if items then ScanItems() end
+	if spells then ScanSpells() end
+	local sig = Signature()
+	if sig ~= lastSignature or needsLayout then
+		lastSignature = sig
+		Layout()
+	else
+		for _, cat in ipairs(CATEGORIES) do
+			local b = buttons[cat]
+			if b:IsShown() then UpdateButton(b) end
+		end
+	end
 	if needsRetry and retries < 15 then
 		retries = retries + 1
-		C_Timer.After(1, ns.Refresh)
+		C_Timer.After(1, function() ns.Refresh(true, false) end)
 	elseif not needsRetry then
 		retries = 0
 	end
 end
 
-local pending
-function ns.Refresh()
+-- Debounced; no arguments rescans everything
+local pending, pendingItems, pendingSpells
+function ns.Refresh(items, spells)
 	if not db or InCombatLockdown() then return end
+	if items == nil and spells == nil then items, spells = true, true end
+	pendingItems = pendingItems or items
+	pendingSpells = pendingSpells or spells
 	if pending then return end
 	pending = true
 	C_Timer.After(0.1, function()
-		pending = nil
-		Refresh()
+		pending = false
+		local i, sp = pendingItems, pendingSpells
+		pendingItems, pendingSpells = nil, nil
+		Refresh(i, sp)
 	end)
 end
 
@@ -543,12 +591,11 @@ local function UpdateCooldowns()
 	if InCombatLockdown() then return end
 	for _, cat in ipairs(CATEGORIES) do
 		local b = buttons[cat]
-		if b:IsShown() then UpdateButton(b) end
+		if b:IsShown() then UpdateCooldown(b) end
 	end
 end
 
 -- Edit Mode style highlight: blue when available, gold when selected (opens the settings dialog)
-local selected, ignoreClear = false, false
 
 function ns.SetSelected(sel)
 	selected = sel and true or false
@@ -644,23 +691,22 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		for _, e in ipairs({
 			"PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP", "PLAYER_REGEN_ENABLED",
 			"GET_ITEM_INFO_RECEIVED", "BAG_UPDATE_COOLDOWN", "SPELL_UPDATE_COOLDOWN", "SPELLS_CHANGED",
-			-- any way an item can arrive, leave or move
-			"BAG_UPDATE", "BAG_UPDATE_DELAYED", "ITEM_PUSH", "BAG_NEW_ITEMS_UPDATED",
-			"UNIT_INVENTORY_CHANGED", "ITEM_LOCK_CHANGED",
+			"BAG_UPDATE_DELAYED", -- fires once after any change to what is in the bags
 		}) do
 			pcall(events.RegisterEvent, events, e)
 		end
 		if ns.BuildOptions then ns.BuildOptions() end
-	elseif event == "UNIT_INVENTORY_CHANGED" and arg1 ~= "player" then
-		return
 	elseif event == "BAG_UPDATE_COOLDOWN" or event == "SPELL_UPDATE_COOLDOWN" then
 		UpdateCooldowns()
-	elseif event == "PLAYER_REGEN_ENABLED" then
-		ns.Refresh()
+	elseif event == "BAG_UPDATE_DELAYED" then
+		ns.Refresh(true, false)
+	elseif event == "SPELLS_CHANGED" then
+		ns.Refresh(false, true)
 	elseif event == "GET_ITEM_INFO_RECEIVED" then
 		-- only matters while we are waiting on item data
-		if needsRetry then ns.Refresh() end
+		if needsRetry then ns.Refresh(true, false) end
 	else
+		-- login, level up, leaving combat: rescan everything
 		if event == "PLAYER_ENTERING_WORLD" then
 			-- bags and item data can still be filling in right after login
 			C_Timer.After(3, ns.Refresh)
